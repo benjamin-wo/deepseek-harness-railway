@@ -44,12 +44,26 @@ htpasswd -bc /etc/nginx/.htpasswd "$AUTH_USER" "$AUTH_PASSWORD"
 echo "start.sh: Basic Auth credentials written for user '${AUTH_USER}'."
 
 # -----------------------------------------------------------------------------
-# 4. OpenRouter API key injection (OpenAI-compatible provider)
+# 4. OpenRouter API key injection
+#
+#    dsh's built-in "deepseek-official" provider route (@deepseek-ai/dsh-llm-deepseek)
+#    is a chat-completions adapter whose endpoint is fully redirectable — it
+#    resolves its API key from the $DEEPSEEK_API_KEY env var (ctx.credentials,
+#    i.e. the web Models page, takes precedence if set there instead) and its
+#    base URL from $DEEPSEEK_BASE_URL, defaulting to api.deepseek.com only
+#    when unset. Pointing both at OpenRouter routes every request through
+#    OpenRouter's OpenAI-compatible gateway. The route still displays as
+#    "deepseek-official" in the UI/logs regardless of the actual endpoint —
+#    that's expected. dsh does NOT read OPENAI_API_KEY/OPENAI_BASE_URL; they
+#    are exported too only as a courtesy for any other OpenAI-SDK-convention
+#    tooling that might run inside the container.
 # -----------------------------------------------------------------------------
 if [ -z "$OPENROUTER_API_KEY" ]; then
     echo "WARNING: OPENROUTER_API_KEY is not set. The harness will start, but model requests will fail until it is configured." >&2
 fi
 
+export DEEPSEEK_API_KEY="${OPENROUTER_API_KEY}"
+export DEEPSEEK_BASE_URL="${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
 export OPENAI_API_KEY="${OPENROUTER_API_KEY}"
 export OPENAI_BASE_URL="${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}"
 export OPENROUTER_API_KEY="${OPENROUTER_API_KEY}"

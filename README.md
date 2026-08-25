@@ -104,17 +104,22 @@ Since `~` resolves to `/data`, this only needs to be done once — it survives e
 
 ## 3. OpenRouter Setup & Model Selection
 
-`dsh` speaks the OpenAI Chat Completions API. `start.sh` maps that directly onto OpenRouter, which exposes an OpenAI-compatible endpoint that fans out to many upstream model providers:
+`dsh`'s built-in provider is a plugin called `@deepseek-ai/dsh-llm-deepseek`, which always registers itself under the provider name **`deepseek-official`** — that name shows up in the UI and logs no matter what endpoint it's actually configured to hit. Its endpoint and key are fully redirectable, and it explicitly supports being pointed at an OpenAI-compatible gateway (OpenRouter included). `start.sh` does exactly that:
 
 ```sh
-OPENAI_API_KEY="$OPENROUTER_API_KEY"
-OPENAI_BASE_URL="https://openrouter.ai/api/v1"   # OpenRouter's OpenAI-compatible endpoint
-OPENROUTER_API_KEY="$OPENROUTER_API_KEY"          # kept for any OpenRouter-specific integrations
+DEEPSEEK_API_KEY="$OPENROUTER_API_KEY"                              # dsh's actual credential lookup
+DEEPSEEK_BASE_URL="https://openrouter.ai/api/v1"                    # dsh's actual endpoint override
+OPENAI_API_KEY="$OPENROUTER_API_KEY"                                # courtesy alias — dsh itself ignores this
+OPENAI_BASE_URL="https://openrouter.ai/api/v1"                      # courtesy alias — dsh itself ignores this
 ```
 
-Because the base URL is repointed at OpenRouter, any OpenAI-compatible model identifier that OpenRouter serves can be used — you are not limited to DeepSeek's own models.
+`DEEPSEEK_API_KEY` / `DEEPSEEK_BASE_URL` are the pair `dsh` actually reads (`apiKeyEnv`/`baseURL` in its provider config, documented in `@deepseek-ai/dsh-llm-deepseek`'s own README) — **not** `OPENAI_API_KEY`/`OPENAI_BASE_URL`, which `dsh` never consults. Those OpenAI-named variables are set anyway only as a courtesy, in case some other OpenAI-SDK-convention tool ends up running inside the container.
 
-**Recommended model identifiers:**
+> If you ever see `This turn failed — llm-deepseek: no API key for provider route "deepseek-official"` in the UI, it means `DEEPSEEK_API_KEY` didn't reach the container (e.g. `OPENROUTER_API_KEY` is unset) — see the [Troubleshooting](#troubleshooting) section.
+
+### Model selection — use OpenRouter-format model IDs
+
+Because the request is now going to OpenRouter, the `model` field of every request must be an **OpenRouter model slug** (`provider/model`), not one of `dsh`'s own default DeepSeek catalog names (`deepseek-v4-flash`, etc.) — those aren't valid at OpenRouter and will fail. In the `dsh` web UI, open the model/agent-preset selector (Settings → Models, or the model picker in the sidebar) and set the model to one of:
 
 | Model ID | Notes |
 |---|---|
@@ -122,7 +127,7 @@ Because the base URL is repointed at OpenRouter, any OpenAI-compatible model ide
 | `deepseek/deepseek-chat` | DeepSeek-V3 general-purpose chat/coding model, faster and cheaper than R1. |
 | `anthropic/claude-3.7-sonnet` | Strong general coding/agentic performance via OpenRouter. |
 
-Get your key at [openrouter.ai/keys](https://openrouter.ai/keys) and browse the full catalog (with live pricing) at [openrouter.ai/models](https://openrouter.ai/models). Set the active model from within the `dsh` web UI's model/session settings, or consult `dsh --help` / `dsh config --help` inside the container for any CLI-level default-model configuration your installed version of `@deepseek-ai/dsh` supports.
+`dsh`'s model catalog is advisory only — typing any other OpenRouter slug (see the full, current list with live pricing at [openrouter.ai/models](https://openrouter.ai/models)) is passed through as-is even if it isn't one of the three above. Get your OpenRouter key at [openrouter.ai/keys](https://openrouter.ai/keys).
 
 ---
 
@@ -161,6 +166,8 @@ Then visit `http://localhost:8080` and log in with the Basic Auth credentials ab
 - **502 / connection refused right after deploy** — `dsh web` may still be starting up. Check the service logs; if it consistently needs more than the built-in 2-second grace period, increase the `sleep 2` in `start.sh`.
 - **502 that never clears, with deploy logs showing `dsh` crash on boot** (e.g. `Promise.withResolvers is not a function`, `node:zlib does not provide an export named createZstdDecompress`, `node:module does not provide an export named stripTypeScriptTypes`) — `dsh`'s plugin loader needs Node APIs newer than the image provides. This repo's `Dockerfile` already pins `node:24-slim` for this reason; if you've changed the base image, revert to Node 24+ (or newer, if a future `dsh` release needs it) rather than Node 20/22.
 - **The UI loads (past Basic Auth) but nothing works — can't add a workspace, model list won't load, etc.** — check the browser's network tab or the deploy logs for `POST /api/host.describe`, `/api/host.listDirectory`, `/api/credentials.describe`, or `GET /api/events.mux` returning `403`. That's `dsh`'s own browser-trust fence rejecting the request's `Host` header, not an Nginx or auth problem. It should be handled automatically (see the note in [Section 1.4](#14-generate-a-public-domain)) — if it's still happening, confirm `RAILWAY_PUBLIC_DOMAIN` matches the domain you're actually visiting, or add that domain to `EXTRA_TRUSTED_HOSTS`.
+- **`This turn failed — llm-deepseek: no API key for provider route "deepseek-official"; ... MISSING_CREDENTIAL`** — `DEEPSEEK_API_KEY` never reached `dsh` (it doesn't read `OPENAI_API_KEY`/`OPENROUTER_API_KEY` directly; `start.sh` maps `OPENROUTER_API_KEY` onto it — see [Section 3](#3-openrouter-setup--model-selection)). Confirm `OPENROUTER_API_KEY` is set as a Railway Variable, then redeploy.
+- **A chat request fails with something like "model not found" once credentials are working** — the selected model is still one of `dsh`'s default DeepSeek catalog names (e.g. `deepseek-v4-flash`), which isn't valid at OpenRouter. Pick an OpenRouter-format `provider/model` slug instead (Section 3).
 - **Stuck in an auth prompt loop** — double-check `AUTH_USER` / `AUTH_PASSWORD` are actually set as Railway Variables (not just in a local `.env`), and that you're using the current values (the `.htpasswd` file is regenerated on every container start).
 - **Streaming responses appear chunky/delayed instead of token-by-token** — confirm nothing sits in front of Nginx re-buffering the response; the `proxy_buffering off;` and `proxy_http_version 1.1;` settings in `nginx.conf` are required for real-time streaming and should not be removed.
 - **Cloned repos / config disappear after a redeploy** — verify a Volume is actually attached at mount path `/data` (Section 1.2). Without it, `/data` is a fresh, empty directory on every deploy.
