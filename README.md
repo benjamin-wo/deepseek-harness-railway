@@ -60,6 +60,7 @@ In the service's **Variables** tab, add:
 | `NODE_ENV` | optional | Defaults not set by the app; recommended `production`. |
 | `PORT` | ❌ do not set | Injected automatically by Railway. Nginx binds to it at startup. |
 | `DSH_INTERNAL_PORT` | optional | Internal port `dsh web` listens on behind Nginx. Defaults to `3080`; only change if it conflicts with something. |
+| `EXTRA_TRUSTED_HOSTS` | optional | Comma/space-separated extra host(s) for `dsh`'s `/api` browser-trust fence — see [Section 1.4](#14-generate-a-public-domain). Only needed for a custom domain; the generated Railway domain is picked up automatically. |
 
 You can copy `.env.example` as a starting point for local reference — Railway variables are set in the dashboard (or via `railway variables set`), not from a committed `.env` file.
 
@@ -70,6 +71,8 @@ You can copy `.env.example` as a starting point for local reference — Railway 
 3. Visit the generated URL — you'll be prompted for the `AUTH_USER` / `AUTH_PASSWORD` credentials you configured above.
 
 Once the deploy is live, every subsequent `git push` to the deployed branch triggers a new build and redeploy; the `/data` volume persists across all of them.
+
+> **Why this matters beyond just reachability:** `dsh` itself rejects any request whose `Host` header isn't on its own trusted-host allowlist (a browser-trust/anti-DNS-rebinding fence, default loopback-only) — without this, the UI would load but every `/api` call would fail with `403`. `start.sh` reads Railway's auto-injected `RAILWAY_PUBLIC_DOMAIN` variable and passes it to `dsh web --trusted-host` automatically, so a generated domain works with no extra configuration. If you attach a **custom domain** instead (or in addition), add it to the `EXTRA_TRUSTED_HOSTS` variable (Section 1.3) or `dsh` will 403 requests arriving on it the same way.
 
 ---
 
@@ -157,6 +160,7 @@ Then visit `http://localhost:8080` and log in with the Basic Auth credentials ab
 
 - **502 / connection refused right after deploy** — `dsh web` may still be starting up. Check the service logs; if it consistently needs more than the built-in 2-second grace period, increase the `sleep 2` in `start.sh`.
 - **502 that never clears, with deploy logs showing `dsh` crash on boot** (e.g. `Promise.withResolvers is not a function`, `node:zlib does not provide an export named createZstdDecompress`, `node:module does not provide an export named stripTypeScriptTypes`) — `dsh`'s plugin loader needs Node APIs newer than the image provides. This repo's `Dockerfile` already pins `node:24-slim` for this reason; if you've changed the base image, revert to Node 24+ (or newer, if a future `dsh` release needs it) rather than Node 20/22.
+- **The UI loads (past Basic Auth) but nothing works — can't add a workspace, model list won't load, etc.** — check the browser's network tab or the deploy logs for `POST /api/host.describe`, `/api/host.listDirectory`, `/api/credentials.describe`, or `GET /api/events.mux` returning `403`. That's `dsh`'s own browser-trust fence rejecting the request's `Host` header, not an Nginx or auth problem. It should be handled automatically (see the note in [Section 1.4](#14-generate-a-public-domain)) — if it's still happening, confirm `RAILWAY_PUBLIC_DOMAIN` matches the domain you're actually visiting, or add that domain to `EXTRA_TRUSTED_HOSTS`.
 - **Stuck in an auth prompt loop** — double-check `AUTH_USER` / `AUTH_PASSWORD` are actually set as Railway Variables (not just in a local `.env`), and that you're using the current values (the `.htpasswd` file is regenerated on every container start).
 - **Streaming responses appear chunky/delayed instead of token-by-token** — confirm nothing sits in front of Nginx re-buffering the response; the `proxy_buffering off;` and `proxy_http_version 1.1;` settings in `nginx.conf` are required for real-time streaming and should not be removed.
 - **Cloned repos / config disappear after a redeploy** — verify a Volume is actually attached at mount path `/data` (Section 1.2). Without it, `/data` is a fresh, empty directory on every deploy.

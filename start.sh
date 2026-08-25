@@ -8,7 +8,8 @@
 #   3. Generate the Nginx Basic Auth credential file
 #   4. Inject the OpenRouter API key as an OpenAI-compatible provider
 #   5. Render the Nginx config template
-#   6. Start `dsh web` in the background, then run Nginx in the foreground
+#   6. Determine trusted hosts for dsh's /api browser-trust fence
+#   7. Start `dsh web` in the background, then run Nginx in the foreground
 # =============================================================================
 set -e
 
@@ -60,12 +61,35 @@ envsubst '${PORT} ${DSH_INTERNAL_PORT}' < /etc/nginx/nginx.conf.template > /etc/
 echo "start.sh: nginx.conf rendered (public PORT=${PORT}, internal DSH_INTERNAL_PORT=${DSH_INTERNAL_PORT})."
 
 # -----------------------------------------------------------------------------
-# 6. Start the harness daemon, then run Nginx in the foreground
+# 6. Trusted hosts for dsh's /api browser-trust fence
+#
+#    dsh's web server rejects any request whose Host header isn't in its
+#    trusted-host allowlist (default: loopback only) — every /api call
+#    403s even though the UI itself loads fine, since Nginx forwards the
+#    original public Host header straight through. RAILWAY_PUBLIC_DOMAIN
+#    is injected automatically by Railway once a public domain exists, so
+#    this needs no manual configuration in the normal case; EXTRA_TRUSTED_HOSTS
+#    (comma/space-separated) covers a custom domain or any additional host.
+# -----------------------------------------------------------------------------
+set -- --host 127.0.0.1 --port "${DSH_INTERNAL_PORT}" --no-open
+
+if [ -n "$RAILWAY_PUBLIC_DOMAIN" ]; then
+    set -- "$@" --trusted-host "$RAILWAY_PUBLIC_DOMAIN"
+fi
+
+if [ -n "$EXTRA_TRUSTED_HOSTS" ]; then
+    for host in $(echo "$EXTRA_TRUSTED_HOSTS" | tr ',' ' '); do
+        set -- "$@" --trusted-host "$host"
+    done
+fi
+
+# -----------------------------------------------------------------------------
+# 7. Start the harness daemon, then run Nginx in the foreground
 # -----------------------------------------------------------------------------
 cd /data/workspace
 
-echo "start.sh: launching dsh web on 127.0.0.1:${DSH_INTERNAL_PORT} ..."
-dsh web --host 127.0.0.1 --port "${DSH_INTERNAL_PORT}" --no-open &
+echo "start.sh: launching dsh web on 127.0.0.1:${DSH_INTERNAL_PORT} (trusted hosts: ${RAILWAY_PUBLIC_DOMAIN:-none} ${EXTRA_TRUSTED_HOSTS}) ..."
+dsh web "$@" &
 
 sleep 2
 
