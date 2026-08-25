@@ -6,8 +6,16 @@
 # directly. All mutable state (cloned repos, git/SSH credentials, harness
 # config, session history) lives under /data, which is expected to be backed
 # by a Railway persistent Volume mounted at /data.
+#
+# Node 24 (not 20) is required: @deepseek-ai/dsh's plugin loader hard-fails
+# at boot on Node < 22 with errors like "Promise.withResolvers is not a
+# function", "node:zlib does not provide an export named
+# createZstdDecompress", and "node:module does not provide an export named
+# stripTypeScriptTypes" — all Node APIs newer than Node 20/21. Node 24 is
+# used (rather than the Node 22 floor) as a safety margin for whichever of
+# those landed later than Node 22.
 # =============================================================================
-FROM node:20-slim
+FROM node:24-slim
 
 # ---------------------------------------------------------------------------
 # System dependencies
